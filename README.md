@@ -1,184 +1,238 @@
-# Kubernetes & AWS Cloud Reliability Audit Checklist
+# 🚀 Kubernetes Reliability and Resilience Checklist
 
-## Reliability & Security Audit Components
+## **1️⃣ Verify the Number of Replicas for Each Deployment**
 
-### **Existing Checklist:**
+### **🔍 How to Check**
+```sh
+kubectl get deployments -A -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,REPLICAS:.spec.replicas,AVAILABLE:.status.availableReplicas"
+```
+For a specific namespace:
+```sh
+kubectl get deployments -n <namespace>
+```
 
-#### **1. More than 1 replica is used**
-- **Check:**
-  - Run `kubectl get deploy -o=jsonpath='{.items[*].spec.replicas}'` to check the replica count.
-  - Ensure all critical applications have more than one replica.
-- **Improve:**
-  - Use Horizontal Pod Autoscaler (HPA) to dynamically adjust replica counts.
-  - Set `minReplicas` > 1 in deployment manifests.
+### **✅ How to Improve**
+- Ensure at least **two replicas** for high availability.
+- Use **Horizontal Pod Autoscaler (HPA)**:
+  ```yaml
+  apiVersion: autoscaling/v2
+  kind: HorizontalPodAutoscaler
+  metadata:
+    name: my-app-hpa
+    namespace: my-namespace
+  spec:
+    minReplicas: 2
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          targetAverageUtilization: 70
+  ```
+- Use **Karpenter for auto-scaling node capacity**.
 
-#### **2. Pod Disruption Budgets (PDB) are in place and correctly configured**
-- **Check:**
-  - Run `kubectl get pdb -A` to list PDBs.
-  - Ensure critical applications have PDBs configured to prevent downtime.
-- **Improve:**
-  - Define PDBs that allow minimal pod disruption.
-  - Example YAML:
-    ```yaml
-    apiVersion: policy/v1
-    kind: PodDisruptionBudget
-    metadata:
-      name: my-app-pdb
-    spec:
-      minAvailable: 1
-      selector:
-        matchLabels:
-          app: my-app
-    ```
-
-#### **3. Topology Spread Constraints are in place and correctly configured**
-- **Check:**
-  - Run `kubectl get deployments -o yaml | grep topologySpreadConstraints`.
-- **Improve:**
-  - Define topology spread constraints to distribute workloads across nodes and availability zones.
-  - Example YAML:
-    ```yaml
-    topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: topology.kubernetes.io/zone
-      whenUnsatisfiable: DoNotSchedule
-      labelSelector:
-        matchLabels:
-          app: my-app
-    ```
-
-#### **4. Resource requests and limits are set and reasonable**
-- **Check:**
-  - Run `kubectl get pods -o=jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.containers[*].resources}{"\n"}{end}'`.
-- **Improve:**
-  - Define CPU & memory limits to prevent resource starvation:
-    ```yaml
-    resources:
-      requests:
-        memory: "256Mi"
-        cpu: "250m"
-      limits:
-        memory: "512Mi"
-        cpu: "500m"
-    ```
-
-#### **5. Open Source Software (OSS) components used are properly configured**
-- **Check:**
-  - Verify Helm values are set correctly.
-  - Check configurations in Helm releases: `helm list -A`.
-- **Improve:**
-  - Keep Helm charts updated.
-  - Implement version control on Helm values.
-
-#### **6. Useful metrics are collected from each OSS component**
-- **Check:**
-  - Verify Prometheus metrics with `kubectl get pods -n monitoring | grep prometheus`.
-- **Improve:**
-  - Install Prometheus & Grafana to visualize system health.
-  - Enable metrics collection in applications.
-
-#### **7. OpenTelemetry (OTEL) instrumentation is in place**
-- **Check:**
-  - Validate tracing setup in applications.
-  - Check `otel-collector` logs.
-- **Improve:**
-  - Integrate OTEL SDKs in applications.
-  - Deploy OTEL Collector.
-
-#### **8. Liveness checks are in place**
-- **Check:**
-  - Run `kubectl get deploy -o=jsonpath='{.items[*].spec.template.spec.containers[*].livenessProbe}'`.
-- **Improve:**
-  - Define liveness probes to detect application failures.
-    ```yaml
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 8080
-      initialDelaySeconds: 5
-      periodSeconds: 10
-    ```
-
-#### **9. Other reliability concerns should be documented**
-- **Check:**
-  - Identify frequent issues in logs (`kubectl logs <pod-name>`).
-  - Gather reports from monitoring dashboards.
-- **Improve:**
-  - Automate issue detection with alerts.
+### **⚠️ Reliability Concerns**
+- If **replicas = 1**, failure means downtime.
+- Improper **HPA settings** may lead to over/under-scaling.
 
 ---
 
-### **Additional Checklist Items for Security & Reliability**
+## **2️⃣ Validate Karpenter Auto-Scaling Configuration**
 
-#### **10. Role-Based Access Control (RBAC) is correctly configured**
-- **Check:**
-  - Run `kubectl get roles,rolebindings,clusterroles,clusterrolebindings -A`.
-- **Improve:**
-  - Implement least privilege principles in RBAC policies.
+### **🔍 How to Check**
+```sh
+kubectl get pods -n karpenter
+kubectl get provisioners -A
+```
+Check logs for Karpenter issues:
+```sh
+kubectl logs -l app.kubernetes.io/name=karpenter -n karpenter
+```
 
-#### **11. Network Policies are enforced**
-- **Check:**
-  - Run `kubectl get networkpolicy -A`.
-- **Improve:**
-  - Restrict pod communication using network policies:
-    ```yaml
-    kind: NetworkPolicy
-    apiVersion: networking.k8s.io/v1
-    metadata:
-      name: deny-all
-      namespace: default
-    spec:
-      podSelector: {}
-      policyTypes:
-      - Ingress
-      - Egress
-    ```
+### **✅ How to Improve**
+- Ensure Karpenter **automatically provisions nodes**:
+  ```yaml
+  apiVersion: karpenter.k8s.aws/v1alpha5
+  kind: Provisioner
+  metadata:
+    name: default
+  spec:
+    requirements:
+      - key: "node.kubernetes.io/instance-type"
+        operator: In
+        values: ["m5.large", "m5.xlarge"]
+  ```
 
-#### **12. Secrets Management is properly handled**
-- **Check:**
-  - Run `kubectl get secrets -A`.
-- **Improve:**
-  - Use AWS Secrets Manager or Kubernetes Secrets.
-  - Ensure secrets are encrypted at rest.
-
-#### **13. Persistent Volumes (PV) & StorageClass configurations**
-- **Check:**
-  - Run `kubectl get pvc -A`.
-- **Improve:**
-  - Use dynamically provisioned storage classes.
-
-#### **14. Cluster AutoScaling & Node AutoScaler**
-- **Check:**
-  - Ensure Karpenter or Cluster Autoscaler is deployed.
-- **Improve:**
-  - Optimize scaling policies for workload demand.
-
-#### **15. Backup & Disaster Recovery Strategies**
-- **Check:**
-  - Ensure Velero or AWS Backup is configured.
-- **Improve:**
-  - Regularly test disaster recovery plans.
-
-#### **16. Certificate Management & Expiry Monitoring**
-- **Check:**
-  - Run `kubectl get certs -A` (for cert-manager).
-- **Improve:**
-  - Automate certificate renewal using cert-manager.
-
-#### **17. Image Security & Vulnerability Scanning**
-- **Check:**
-  - Ensure Trivy or Clair is scanning container images.
-- **Improve:**
-  - Regularly scan images for vulnerabilities.
-
-#### **18. AWS Security Best Practices**
-- **Check:**
-  - Use AWS Security Hub and GuardDuty for threat detection.
-- **Improve:**
-  - Implement IAM least privilege policies.
-  - Encrypt EBS volumes & S3 buckets.
+### **⚠️ Reliability Concerns**
+- **Slow scaling may cause pod failures** if nodes aren’t provisioned fast enough.
+- **Over-scaling increases costs unnecessarily**.
 
 ---
 
-## **Conclusion**
-Regularly auditing Kubernetes & AWS infrastructure improves security, reliability, and efficiency. Use this checklist to maintain best practices and mitigate risks in cloud environments.
+## **3️⃣ Check for Pod Disruption Budgets (PDBs)**
+
+### **🔍 How to Check**
+```sh
+kubectl get pdb -A
+```
+For detailed config:
+```sh
+kubectl describe pdb -n <namespace>
+```
+
+### **✅ How to Improve**
+- Define **PDBs to prevent too many disruptions**:
+  ```yaml
+  apiVersion: policy/v1
+  kind: PodDisruptionBudget
+  metadata:
+    name: my-app-pdb
+    namespace: my-namespace
+  spec:
+    minAvailable: 1
+    selector:
+      matchLabels:
+        app: my-app
+  ```
+
+### **⚠️ Reliability Concerns**
+- **Missing PDBs can cause mass pod evictions**.
+- **Too strict PDBs (e.g., `minAvailable: 100%`) prevent node draining**.
+
+---
+
+## **4️⃣ Verify Ingress Configuration**
+
+### **🔍 How to Check**
+```sh
+kubectl get ingress -A
+```
+For detailed rules:
+```sh
+kubectl describe ingress <ingress-name> -n <namespace>
+```
+
+### **✅ How to Improve**
+- Ensure **Ingress is properly configured with an ALB**:
+  ```yaml
+  apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    name: my-app-ingress
+    annotations:
+      kubernetes.io/ingress.class: "alb"
+  spec:
+    rules:
+      - host: my-app.example.com
+        http:
+          paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: my-app
+                  port:
+                    number: 80
+  ```
+
+### **⚠️ Reliability Concerns**
+- **Misconfigured TLS certificates** can break traffic.
+- **Missing health checks** may cause **traffic routing to failing pods**.
+
+---
+
+## **5️⃣ Validate Kyverno Policies**
+
+### **🔍 How to Check**
+```sh
+kubectl get clusterpolicies -A
+kubectl get policies -A
+```
+For policy logs:
+```sh
+kubectl logs -l kyverno.io/component=kyverno
+```
+
+### **✅ How to Improve**
+- Ensure security policies like **image signing** and **enforcement of best practices**:
+  ```yaml
+  apiVersion: kyverno.io/v1
+  kind: ClusterPolicy
+  metadata:
+    name: enforce-image-signing
+  spec:
+    validationFailureAction: Enforce
+    rules:
+      - name: check-image-signature
+        match:
+          resources:
+            kinds:
+              - Pod
+        validate:
+          message: "Container images must be signed"
+  ```
+
+### **⚠️ Reliability Concerns**
+- **Too strict Kyverno policies can block deployments**.
+- **Lack of policies exposes the cluster to security risks**.
+
+---
+
+## **6️⃣ Ensure Helm-Deployed OSS Components Are Properly Configured**
+
+### **🔍 How to Check**
+```sh
+helm list -A
+helm get values <release-name> -n <namespace>
+```
+
+### **✅ How to Improve**
+- Ensure custom configurations are applied for **persistence, security, and monitoring**.
+
+### **⚠️ Reliability Concerns**
+- **Using default Helm values can lead to insecure setups**.
+- **Misconfigured storage can lead to data loss**.
+
+---
+
+## **7️⃣ Verify GitLab and ArgoCD CI/CD Pipelines**
+
+### **🔍 How to Check GitLab Pipelines**
+```sh
+kubectl get pods -n gitlab
+kubectl logs -n gitlab -l app=gitlab-runner
+```
+
+### **🔍 How to Check ArgoCD Deployments**
+```sh
+kubectl get applications -n argocd
+kubectl describe application <app-name> -n argocd
+```
+
+### **✅ How to Improve**
+- Ensure **GitLab CI/CD integrates with Kubernetes**.
+- Ensure **ArgoCD syncs Git repositories automatically**.
+
+### **⚠️ Reliability Concerns**
+- **Pipeline failures can block releases**.
+- **ArgoCD misconfiguration may lead to drift between Git and Kubernetes**.
+
+---
+
+## **🔟 Additional Checks**
+✅ **Backup & Disaster Recovery (Velero)**
+```sh
+kubectl get backup -n velero
+```
+✅ **AWS Secret Management**
+```sh
+aws secretsmanager list-secrets
+```
+✅ **Certificate Expiry Monitoring**
+```sh
+kubectl get secret -A
+```
+
+---
+
+🚀 **This checklist ensures high availability, security, and resilience for Kubernetes workloads!**
